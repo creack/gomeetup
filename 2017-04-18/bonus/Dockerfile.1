@@ -1,0 +1,22 @@
+# Dockerfile - part 1.
+
+FROM            golang:1.8
+MAINTAINER      Guillaume J. Charmes <guillaume@leaf.ag>
+
+# Install linters and coverage tools.
+RUN             go get github.com/alecthomas/gometalinter && gometalinter -i && \
+                go get github.com/axw/gocov/... \
+                       github.com/matm/gocov-html
+
+# Disable CGO and recompile the stdlib.
+ENV             CGO_ENABLED 0
+RUN             go install -a -ldflags -d std
+
+# Install jq and yaml2json for parsing glide.lock to precompile.
+RUN             apt-get update && apt-get install -y jq
+RUN             go get github.com/creack/yaml2json
+
+# Set workdir.
+ARG             APP_DIR
+ENV             APP_PATH $GOPATH/src/$APP_DIR
+WORKDIR         $APP_PATH

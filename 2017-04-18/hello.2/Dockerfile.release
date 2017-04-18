@@ -1,0 +1,5 @@
+# Dockerfile.release
+FROM            scratch
+
+ADD             .asset.tar /
+ENTRYPOINT      ["/app"]

@@ -1,0 +1,260 @@
+Golang, Docker and Production: A Love Story
+How to properly use Go and Docker to release to production
+18 Apr 2017
+Tags: golang, docker, production, ssl, timezone
+
+Guillaume J. Charmes
+Sr Principal Software Architect, Agrarian Labs
+guillaume@leaf.ag
+https://www.leaf.ag
+@charme_g
+
+* Introduction
+
+Golang can be tricky to use with Docker, especially in production.
+
+In this talk, we are going to see how to preprare your Docker image so they can be easily deployed
+and we are going to go through some example and edge cases.
+
+Once we have our proper Docker images, we will talk about testing.
+
+Let's start with an example to see what is going on.
+
+* Example: Hello World.
+
+.play hello/hello.go
+
+* Dockerfile
+
+.code hello/Dockerfile
+
+* Result
+
+    $> docker build --no-cache -t hello .
+    Sending build context to Docker daemon 4.096 kB
+    Step 1/4 : FROM golang:1.8
+    ---> c0ccf5f2c036
+    Step 2/4 : ADD . $APP_PATH
+    ---> 0d772f57c423
+    Removing intermediate container 4298123a2d97
+    Step 3/4 : ENTRYPOINT /app
+    ---> Running in b5259a5ac1c6
+    ---> 861ada5da31f
+    Removing intermediate container b5259a5ac1c6
+    Step 4/4 : RUN go build -o /app
+    ---> Running in dffda4d64804
+    ---> 8e7a754baae0
+    Removing intermediate container dffda4d64804
+    Successfully built 8e7a754baae0
+
+    $> docker run --rm hello
+    hello world!
+
+* The issue
+
+    $> docker image hello
+    REPOSITORY          TAG                 IMAGE ID            CREATED              SIZE
+    hello               latest              8e7a754baae0        About a minute ago   704 MB
+
+    $> docker history hello
+    IMAGE               CREATED              CREATED BY                                      SIZE                COMMENT
+    8e7a754baae0        About a minute ago   /bin/sh -c go build -o /app                     960 kB
+    861ada5da31f        About a minute ago   /bin/sh -c #(nop)  ENTRYPOINT ["/app"]          0 B
+    0d772f57c423        About a minute ago   /bin/sh -c #(nop) ADD dir:b27438cb2dbd2c12...   621 B
+    c0ccf5f2c036        10 days ago          /bin/sh -c #(nop) COPY file:f6191f2c86edc9...   2.48 kB
+    <missing>           10 days ago          /bin/sh -c #(nop)  WORKDIR /go                  0 B
+    <missing>           10 days ago          /bin/sh -c mkdir -p "$GOPATH/src" "$GOPATH...   0 B
+    <missing>           10 days ago          /bin/sh -c #(nop)  ENV PATH=/go/bin:/usr/l...   0 B
+    <missing>           10 days ago          /bin/sh -c #(nop)  ENV GOPATH=/go               0 B
+    <missing>           10 days ago          /bin/sh -c curl -fsSL "$GOLANG_DOWNLOAD_UR...   273 MB
+    <missing>           10 days ago          /bin/sh -c #(nop)  ENV GOLANG_DOWNLOAD_SHA...   0 B
+    <missing>           10 days ago          /bin/sh -c #(nop)  ENV GOLANG_DOWNLOAD_URL...   0 B
+    <missing>           10 days ago          /bin/sh -c #(nop)  ENV GOLANG_VERSION=1.8.1     0 B
+    <missing>           4 weeks ago          /bin/sh -c apt-get update && apt-get insta...   139 MB
+    <missing>           4 weeks ago          /bin/sh -c apt-get update && apt-get insta...   123 MB
+    <missing>           4 weeks ago          /bin/sh -c apt-get update && apt-get insta...   44.6 MB
+    <missing>           4 weeks ago          /bin/sh -c #(nop)  CMD ["/bin/bash"]            0 B
+    <missing>           4 weeks ago          /bin/sh -c #(nop) ADD file:4eedf861fb567ff...   123 MB
+
+* The solution
+
+In order to solve the large image issue, we need to do 2 things:
+
+- Staticly build our binary.
+- Embed that binary into a "Scratch" image.
+
+* New Dockerfiles
+
+.code hello.2/Dockerfile
+.code hello.2/Dockerfile.release
+
+* Side note: using Dockerfile's ARG
+
+In order to make things more generic, we can use the Dockerfile *ARG* to set the build path during the `docker build`.
+In our example, we do:
+
+    $> docker build --build-arg APP_DIR=hello -t hello .
+
+In production, we can re-use it as well:
+
+    $> docker build --build-arg APP_DIR=github.com/agrarianlabs/auth -t auth .
+
+    $> docker build --build-arg APP_DIR=github.com/creack/gofour -t gofour .
+
+* Plugging things together.
+
+# .code hello.2/Makefile
+
+    # Makefile
+    APP_DIR         = hello
+    BUILD_IMG       = hello:build
+    RELEASE_IMG     = hello:release
+
+    build           : .asset.tar
+    .asset.tar      : Dockerfile hello.go
+                    docker build --build-arg APP_DIR=$(APP_DIR) -t $(BUILD_IMG) .
+                    docker run --rm $(BUILD_IMG) tar cf - /app > $@
+
+    release         : .release
+    .release        : .asset.tar Dockerfile.release
+                    docker build -t $(RELEASE_IMG) -f Dockerfile.release .
+                    @touch $@
+
+    clean           :
+                    @rm -f .asset.tar .release
+
+    .PHONY          : build release
+
+* Trying agin
+
+    $> make release
+    [...]
+
+    $> docker images hello
+    REPOSITORY          TAG                 IMAGE ID            CREATED              SIZE
+    hello               release             9f60378e5d3b        About a minute ago   960 kB
+    hello               build               0d81da9e619b        About a minute ago   704 MB
+
+    $> docker run --rm hello:release
+    hello world!
+
+    $> make release
+    make: Nothing to be done for `release'.
+
+We now have a release iamge reasy for production that is less than 1Mb!
+
+* Use case: Fetch HTTPS resource.
+
+Let's take a slightly more complex use case.
+
+.play fetch/fetch.go /^func fetch/,/^}/
+
+    $> make release
+    [...]
+    $> docker run --rm fetch:release
+    2017/04/18 21:49:53 error fetching google page: Get https://www.google.com: x509: failed to load system roots and no roots provided
+    $> docker run --rm fetch:build /app
+    Success!
+
+* Updated Makefile
+
+# .code fetch/Makefile
+
+    # Makefile
+    APP_DIR         = fetch
+    BUILD_IMG       = fetch:build
+    RELEASE_IMG     = fetch:release
+    SRCS            = fetch.go
+    EXTRA_ASSETS    = /etc/ssl
+
+    build           : .assets.tar
+    .assets.tar     : Dockerfile $(SRCS)
+                    docker build --build-arg APP_DIR=$(APP_DIR) -t $(BUILD_IMG) .
+                    docker run --rm $(BUILD_IMG) tar cf - /app $(EXTRA_ASSETS) > $@
+
+    release         : .release
+    .release        : .assets.tar Dockerfile.release
+                    docker build -t $(RELEASE_IMG) -f Dockerfile.release .
+                    @touch $@
+
+    clean           :
+                    @rm -f .assets.tar .release
+
+    .PHONY          : build release
+
+* Use case: Time
+
+Ok, now we have our SSL certificates in the image, we should be good to go, right?
+Not so fast..
+
+Let's try to display the current time here in Austin:
+
+.play tz/tz.go  /^func tz/,/^}/
+
+    $> make release
+    [...]
+    $> docker run --rm tz:release
+    2017/04/18 22:04:59 error loading Austin timezone location: open /usr/local/go/lib/time/zoneinfo.zip: no such file or directory
+
+* Webserver assets
+
+In the case of a webserver, you probably want to have your template files at hand.
+You get the idea, we can use the same _Makefile_ and add more values to our *EXTRA_ASSETS* variable.
+
+
+* Testing: Database
+
+.play pg/pg.go  /^func pgTime/,/^}/
+
+* New Makefile - Part 1
+
+# .code pg/Makefile
+
+    APP_DIR         = pg
+    BUILD_IMG       = pg:build
+    RELEASE_IMG     = pg:release
+    SRCS            = pg.go pg_test.go
+    EXTRA_ASSETS    = /etc/ssl /usr/local/go/lib/time/zoneinfo.zip
+    PG_IMG          = postgres:9.6
+    PG_C            = pg_c
+
+    start           : .pg_start .release
+                    docker run --rm -it --link "$(PG_C):pg" $(RELEASE_IMG) -pg "postgres://postgres@pg/postgres?sslmode=disable"
+
+    pg_start        : .pg_start
+    .pg_start       :
+                    @docker rm -f -v $(PG_C) >& /dev/null || true
+                    docker run -d --name $(PG_C) $(PG_IMG)
+                    @while ! docker exec $(PG_C) psql -U postgres -d postgres -c "SELECT;" >& /dev/null; do sleep 1; done
+                    @echo "Testing Postgres DB up and running."
+                    @touch $@
+
+    test            : .pg_start .assets.tar
+                    docker run --rm -it --link "$(PG_C):pg" $(BUILD_IMG) go test -v -cover -pg "postgres://postgres@pg/postgres?sslmode=disable"
+    clean           :
+                    @docker rm -f -v $(PG_C) >& /dev/null || true
+                    @rm -f .assets.tar .release .pg_start
+
+    .PHONY          : build release test pg_start start
+
+
+* New Makefile - Part 2 (No change)
+
+# .code pg/Makefile
+
+    build           : .assets.tar
+    .assets.tar     : Dockerfile $(SRCS)
+                    docker build --build-arg APP_DIR=$(APP_DIR) -t $(BUILD_IMG) .
+                    docker run --rm $(BUILD_IMG) tar cf - /app $(EXTRA_ASSETS) > $@
+
+    release         : .release
+    .release        : .assets.tar Dockerfile.release
+                    docker build -t $(RELEASE_IMG) -f Dockerfile.release .
+                    @touch $@
+
+* Bonus: Agrarian Labs' very own Dockerfiles..
+
+.code bonus/Dockerfile.1
+* 
+.code bonus/Dockerfile.2
+.code bonus/Dockerfile.release

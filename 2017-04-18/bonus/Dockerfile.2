@@ -1,0 +1,17 @@
+# Dockerfile - part 2.
+
+# Precompile deps.
+ADD             glide.yaml $APP_PATH/glide.yaml
+ADD             glide.lock $APP_PATH/glide.lock
+ADD             vendor     $APP_PATH/vendor
+RUN             yaml2json < glide.lock | \
+                jq -r -c '.imports[], .testImports[] | {name, subpackages}' | sed 's/null/[""]/'   | \
+                jq -r -c '.name as $name | .subpackages[] | [$name, .] | join("/")' | sed 's|/$||' | \
+                while read l; do \
+                  echo "$l...";  \
+                  go install -ldflags -d $APP_DIR/vendor/$l 2> /dev/null; \
+                done
+
+# Compile the static binary.
+ADD             . $APP_PATH
+RUN             go build -ldflags -d -o /app
