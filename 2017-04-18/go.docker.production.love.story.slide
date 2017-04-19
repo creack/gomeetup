@@ -9,6 +9,12 @@ guillaume@leaf.ag
 https://www.leaf.ag
 @charme_g
 
+* Code & Slides
+
+All the code and slides from this presentation can be found on github:
+.link https://github.com/creack/gomeetup github.com/creack/gomeetup
+
+
 * Introduction
 
 Golang can be tricky to use with Docker, especially in production.
