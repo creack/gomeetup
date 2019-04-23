@@ -1,0 +1,112 @@
+Golang and Memory
+Miami/FLL Golang Meetup.
+18 Apr 2019
+Tags: memory, golang, garbage collection
+
+Guillaume J. Charmes
+Engineer at Magicleap
+guillaume@charmes.net
+@charme_g
+
+* Heap vs Stack
+
+.image memoryLayoutC.jpg
+
+* Why worry about it?
+
+- Good practices
+- Performances
+- Avoid conflict with the Garbage Collector
+
+* Stack
+
+.code stack.go /^func stack/,/^}/
+
+* Heap
+
+.code heap.go /^func heap/,/^}/
+
+* How to worry about it?
+
+gcflags to the rescue
+
+  go build -gcflags -m
+  go build -gcflags '-m -m'
+
+* Stack
+
+  # command-line-arguments
+  ./stack.go:3:6: can inline stack
+  ./stack.go:8:6: can inline main
+  ./stack.go:9:7: inlining call to stack
+
+* Heap
+
+  # command-line-arguments
+  ./heap.go:3:6: can inline heap
+  ./heap.go:9:6: can inline main
+  ./heap.go:10:6: inlining call to heap
+  ./heap.go:4:10: heap new(int) does not escape
+  ./heap.go:10:6: main new(int) does not escape
+
+* Let's try something more interesting
+
+.code autoheap.go /^func heap/,/^}/
+
+* Automatic Heap
+
+  # command-line-arguments
+  ./autoheap.go:3:6: can inline heap
+  ./autoheap.go:8:6: can inline main
+  ./autoheap.go:9:15: inlining call to heap
+  ./autoheap.go:5:9: &x escapes to heap
+  ./autoheap.go:4:2: moved to heap: x
+  ./autoheap.go:9:15: main &x does not escape
+
+* Pointer can stick with the stack
+
+.code stackptr.go /^func foo/,/^}/
+.code stackptr.go /^func stack/,/^}/
+
+* Stack
+
+  # command-line-arguments
+  ./stackptr.go:3:6: can inline foo
+  ./stackptr.go:7:6: can inline stack
+  ./stackptr.go:9:5: inlining call to foo
+  ./stackptr.go:12:6: can inline main
+  ./stackptr.go:13:7: inlining call to stack
+  ./stackptr.go:13:7: inlining call to foo
+  ./stackptr.go:3:10: foo x does not escape
+  ./stackptr.go:9:6: stack &x does not escape
+  ./stackptr.go:13:7: main &x does not escape
+
+* Variables are on the stack
+
+.code smallvarstack.go
+
+  # command-line-arguments
+  ./smallvarstack.go:5:6: can inline test
+  ./smallvarstack.go:9:6: can inline main
+  ./smallvarstack.go:10:6: inlining call to test
+
+* Unless too big
+
+.code bigvarheap.go
+
+  # command-line-arguments
+  ./bigvarheap.go:5:6: can inline test
+  ./bigvarheap.go:9:6: can inline main
+  ./bigvarheap.go:10:6: inlining call to test
+  ./bigvarheap.go:10:6: moved to heap: data
+
+* Abusing Unsage
+
+** Why?
+
+- CGO
+- Shared libs
+
+* 
+
+.code gc.go
